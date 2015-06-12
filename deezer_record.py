@@ -177,8 +177,6 @@ def reset_sink_input(sink_config):
         ["/usr/bin/pactl", "unload-module", str(sink_config[0])]
     )
 
-    return sink_input
-
 def main():
     options = parse_opt(sys.argv)
     options['title_regex'] = re.compile(options['title_regex'])
@@ -187,29 +185,31 @@ def main():
 
     sink_input = move_sink_input()
 
-    record_thread = RecordThread(options['winid'])
-    cleaner_thread = CleanerThread(record_thread, options['title_regex'], False)
-    record_thread.start()
-    cleaner_thread.start()
-
-    time.sleep(1)
-    initial_name = record_thread.win_current_name
-    recorded = False
-
-    while recorded == False:
-        new_record_thread = RecordThread(options['winid'])
-        cleaner_thread = CleanerThread(new_record_thread, options['title_regex'])
-        record_thread.join()
-
-        new_record_thread.start()
+    try:
+        record_thread = RecordThread(options['winid'])
+        cleaner_thread = CleanerThread(record_thread, options['title_regex'], False)
+        record_thread.start()
         cleaner_thread.start()
-        record_thread = new_record_thread
-        time.sleep(1)
-        recorded = (initial_name == record_thread.win_current_name)
 
-    record_thread.join()
-    cleaner_thread.join()
-    reset_sink_input(sink_input)
+        time.sleep(1)
+        initial_name = record_thread.win_current_name
+        recorded = False
+
+        while recorded == False:
+            new_record_thread = RecordThread(options['winid'])
+            cleaner_thread = CleanerThread(new_record_thread, options['title_regex'])
+            record_thread.join()
+
+            new_record_thread.start()
+            cleaner_thread.start()
+            record_thread = new_record_thread
+            time.sleep(1)
+            recorded = (initial_name == record_thread.win_current_name)
+
+        record_thread.join()
+        cleaner_thread.join()
+    finally:
+        reset_sink_input(sink_input)
 
 class RecordThread(threading.Thread):
     """Thread that actually record pulse output"""
