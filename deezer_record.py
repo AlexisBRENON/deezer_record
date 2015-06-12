@@ -7,6 +7,8 @@ import sys
 import getopt
 import time
 import io
+import os
+import struct
 import subprocess
 import threading
 import re
@@ -160,22 +162,54 @@ def move_sink_input():
                     sink_inputs[int(sink_index.group(1))] = app_name.group(1)
                     break
 
-    sink_input = select(sink_inputs)
+    if len(sink_inputs.keys()) == 1:
+        sink_input = sink_inputs.keys()[0]
+    else:
+        sink_input = select(sink_inputs)
     module_id = int(subprocess.check_output(
-        ["/usr/bin/pactl", "load-module", "module-null-sink", "sink_name=deezer-record"]
+        ["/usr/bin/pactl", "load-module", "module-null-sink", "sink_name=deezer_record"]
     ))
     subprocess.call(
-        ["/usr/bin/pactl", "move-sink-input", str(sink_input), "deezer-record"]
+        ["/usr/bin/pactl", "move-sink-input", str(sink_input), "deezer_record"]
     )
     return (module_id, sink_input)
 
 def reset_sink_input(sink_config):
     subprocess.call(
-        ["/usr/bin/pactl", "move-sink-input", str(sink_config[1]), "1"]
-    )
-    subprocess.call(
         ["/usr/bin/pactl", "unload-module", str(sink_config[0])]
     )
+    subprocess.call(
+        ["/usr/bin/pactl", "move-sink-input", str(sink_config[1]), "1"]
+    )
+
+def launch_record():
+    parec_process = subprocess.Popen(
+        ["/usr/bin/parec", "-d", "deezer_record.monitor"],
+        stdout=subprocess.PIPE
+    )
+    return parec_process
+
+def has_silence(samples):
+    print("looking for silence")
+    # Silence is at least 0.1sec long
+    silence_min_length = (44100/10)*4
+    silence_begin_index = len(samples)
+    silence_end_index = 0
+    index = 0
+    while index <= len(samples)-2:
+        sample_value = struct.unpack("h", samples[index:index+2])[0]
+        if abs(sample_value) < 0x0020 and silence_begin_index > index:
+            silence_begin_index = index
+        else:
+            silence_end_index = index
+            if silence_begin_index < silence_end_index:
+                if (silence_end_index - silence_begin_index) >= silence_min_length:
+                    return silence_begin_index + int((silence_end_index - silence_begin_index)/2)
+                else:
+                    silence_begin_index = len(samples)
+        index = index+2
+    return None
+
 
 def main():
     options = parse_opt(sys.argv)
@@ -186,50 +220,48 @@ def main():
     sink_input = move_sink_input()
 
     try:
-        record_thread = RecordThread(options['winid'])
-        cleaner_thread = CleanerThread(record_thread, options['title_regex'], False)
-        record_thread.start()
-        cleaner_thread.start()
-
+        parec_process = launch_record()
         time.sleep(1)
-        initial_name = record_thread.win_current_name
-        recorded = False
+        initial_name = get_x_win_name(options['winid'])
+        initial_recorded = False
 
-        while recorded == False:
-            new_record_thread = RecordThread(options['winid'])
-            cleaner_thread = CleanerThread(new_record_thread, options['title_regex'])
-            record_thread.join()
+        num_sample = (44100/2)*4
+        data = ''
+        while initial_recorded == False:
+            song_changed = False
+            win_current_name = get_x_win_name(options['winid'])
+            current_name_matching = options['title_regex'].search(win_current_name)
+            title = current_name_matching.group('title')
+            artist = current_name_matching.group('artist')
+            file_name = "{}-{}".format(artist, title)
+            raw_file = io.open("{}.raw".format(file_name), "wb")
+            print("Recording {} from {}".format(title, artist))
+            while not song_changed:
 
-            new_record_thread.start()
-            cleaner_thread.start()
-            record_thread = new_record_thread
-            time.sleep(1)
-            recorded = (initial_name == record_thread.win_current_name)
+                data = parec_process.stdout.read(num_sample)
+                while len(data) < num_sample:
+                    data += parec_process.stdout.read(num_sample)
 
-        record_thread.join()
-        cleaner_thread.join()
+                breaking_sample = has_silence(data)
+                if breaking_sample:
+                    print("Silence discovered")
+                    if win_current_name != get_x_win_name(options['winid']):
+                        # The song has changed
+                        raw_file.write(bytearray(data[:breaking_sample]))
+                        data = data[breaking_sample:]
+                        song_changed = True
+                    else:
+                        raw_file.write(bytearray(data))
+                        data = []
+                else:
+                    raw_file.write(bytearray(data))
+                    data = []
+
+            raw_file.close()
+            initial_recorded = (initial_name == record_thread.win_current_name)
+
     finally:
         reset_sink_input(sink_input)
-
-class RecordThread(threading.Thread):
-    """Thread that actually record pulse output"""
-    def __init__(self, x_win_id):
-        super(RecordThread, self).__init__()
-        self.x_win_id = x_win_id
-        self.raw_file_name = str(time.time())
-        self.raw_file = io.open(self.raw_file_name, "wb")
-
-    def run(self):
-        parec_process = subprocess.Popen(
-            ["/usr/bin/parec", "-d", "deezer-record.monitor"],
-            stdout=self.raw_file
-        )
-        self.win_current_name = get_x_win_name(self.x_win_id)
-        print("Recording {}".format(self.win_current_name))
-        while self.win_current_name == get_x_win_name(self.x_win_id):
-            time.sleep(0.1)
-        parec_process.kill()
-        self.raw_file.close()
 
 class CleanerThread(threading.Thread):
     """Thread that squash, encode, and tag files"""
