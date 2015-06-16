@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf8 -*-
 # All strings are unicode (even docstrings)
 from __future__ import unicode_literals

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf8 -*-
 # All strings are unicode (even docstrings)
 from __future__ import unicode_literals
@@ -37,7 +37,7 @@ OPTIONS = [
         'optional': True,
         'arg': True,
         'desc': "Python Regex for window title parsing (with 'title' and 'artist' group)",
-        'default': '"(?P<title>.*?) - (?P<artist>.*?) - Google Chrome"'
+        'default': '"(?P<title>.+) - (?P<artist>.+) - Google Chrome"'
     }
 ]
 
@@ -117,14 +117,14 @@ def launch_record():
     )
     return parec_process
 
-def has_silence(samples):
+def longest_silence(samples):
     silence_length = 4
     silence_begin_index = len(samples)
     silence_end_index = 0
     index = 0
     while index <= len(samples)-4:
-        sample_value = struct.unpack("hh", samples[index:index+4])[0]
-        if abs(sample_value) < 0x0020 and silence_begin_index > index:
+        sample_value = struct.unpack("hh", samples[index:index+4])
+        if abs(sample_value[0]) < 0x20 and abs(sample_value[1]) < 0x20 and silence_begin_index > index:
             silence_begin_index = index
         else:
             silence_end_index = index
@@ -142,7 +142,7 @@ def has_silence(samples):
 
 def record_a_song(data, bin_stream_input, win_id, title_regex):
 
-    num_sample = int((44100*4)/2)
+    num_sample = int(44100*4)
 
     win_current_name = get_x_win_name(win_id)
     current_name_matching = title_regex.search(win_current_name)
@@ -158,20 +158,17 @@ def record_a_song(data, bin_stream_input, win_id, title_regex):
         while len(data) < num_sample:
             data += bin_stream_input.read(num_sample)
 
-        breaking_sample = has_silence(data)
-        if breaking_sample:
-            if win_current_name != get_x_win_name(win_id):
-                # The song has changed
-                raw_file.write(data[:breaking_sample])
-                raw_file.close()
-                break
-            else:
-                raw_file.write(data)
-                data = []
+        # Window's title changed
+        if win_current_name != get_x_win_name(win_id):
+            breaking_sample = longest_silence(data)
+            # The song has changed
+            raw_file.write(data[:breaking_sample])
+            raw_file.close()
+            break
         else:
             raw_file.write(data)
             data = []
-    
+
     encode(file_name)
     tag(file_name, title, artist)
     return data[breaking_sample:]
