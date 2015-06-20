@@ -117,32 +117,44 @@ def launch_record():
     )
     return parec_process
 
-def longest_silence(samples):
-    silence_length = 4
-    silence_begin_index = len(samples)
-    silence_end_index = 0
+def find_longest_silence(samples):
+    minimal_length = (44100/100)*4
+    current_silence = {
+            'begin': None,
+            'end': None,
+            }
+    longest_silence = current_silence.copy()
+    longest_silence['length'] = 0
+    in_silence = False
     index = 0
     while index <= len(samples)-4:
         sample_value = struct.unpack("hh", samples[index:index+4])
-        if abs(sample_value[0]) < 0x20 and abs(sample_value[1]) < 0x20 and silence_begin_index > index:
-            silence_begin_index = index
+        if abs(sample_value[0]) < 0x20 and abs(sample_value[1]) < 0x20:
+            if not in_silence:
+                in_silence = True
+                current_silence['begin'] = index
         else:
-            silence_end_index = index
-            if silence_begin_index < silence_end_index:
-                if (silence_end_index - silence_begin_index) >= silence_length:
-                    silence_length = (silence_end_index - silence_begin_index)
-                else:
-                    silence_begin_index = len(samples)
+            if in_silence:
+                current_silence['end'] = index - 4
+                in_silence = False
+                current_silence['length'] = current_silence['end'] - current_silence['begin']
+                if (current_silence['length'] > minimal_length and
+                        current_silence['length'] > longest_silence['length']):
+                    longest_silence = current_silence.copy()
         index = index+4
 
-    if silence_length > 0:
-        return int(silence_begin_index + silence_length/2)
+    if longest_silence['length'] > 0:
+        if not in_silence:
+            # Assert that the cut index is on a whole sample
+            longest_silence['length'] = (int(longest_silence['length']/8))*8
+            longest_silence['cut'] = int(longest_silence['begin'] + longest_silence['length']/2)
+        return longest_silence
     else:
         return None
 
 def record_a_song(data, bin_stream_input, win_id, title_regex):
 
-    num_sample = int(44100*4)
+    num_sample = int(44100*4*3)
 
     win_current_name = get_x_win_name(win_id)
     current_name_matching = title_regex.search(win_current_name)
@@ -154,24 +166,28 @@ def record_a_song(data, bin_stream_input, win_id, title_regex):
 
     raw_file = io.open("{}.raw".format(file_name), "wb")
     while True:
-        data = bin_stream_input.read(num_sample)
-        while len(data) < num_sample:
-            data += bin_stream_input.read(num_sample)
+        data += bytes(bin_stream_input.read(num_sample))
 
         # Window's title changed
         if win_current_name != get_x_win_name(win_id):
-            breaking_sample = longest_silence(data)
-            # The song has changed
-            raw_file.write(data[:breaking_sample])
-            raw_file.close()
-            break
+            silence = find_longest_silence(data)
+            if silence:
+                if 'cut' in silence:
+                    breaking_sample = silence['cut']
+                    # The song has changed
+                    raw_file.write(data[:breaking_sample])
+                    raw_file.close()
+                    break
+                else:
+                    raw_file.write(data[:silence['begin']])
+                    data = bytes(data[silence['begin']:])
         else:
             raw_file.write(data)
-            data = []
+            data = b''
 
     encode(file_name)
     tag(file_name, title, artist)
-    return data[breaking_sample:]
+    return bytes(data[breaking_sample:])
 
 def encode(file_name):
     lame_process = subprocess.Popen(
@@ -209,7 +225,7 @@ def main():
         initial_name = get_x_win_name(options['winid'])
         initial_recorded = False
 
-        data = ''
+        data = b''
         while initial_recorded == False:
             data = record_a_song(
                 data,
