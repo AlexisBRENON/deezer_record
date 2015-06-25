@@ -185,30 +185,27 @@ def record_a_song(data, bin_stream_input, win_id, title_regex):
             raw_file.write(data)
             data = b''
 
-    encode(file_name)
-    tag(file_name, title, artist)
+    encode(file_name, title, artist)
     return bytes(data[breaking_sample:])
 
-def encode(file_name):
+def encode(file_name, title, artist):
     lame_process = subprocess.Popen(
         ["/usr/bin/lame", "-r",
             "-s", "44.1",
+            "--bitwidth", "16",
+            "--signed",
             "-m", "j",
-            "-h",
+            "-h", "-b 256",
+            "--add-id3v2", "--id3v2-utf16",
+            "--tt", title,
+            "--ta", artist,
+            "--noreplaygain",
             "{}.raw".format(file_name),
             "{}.mp3".format(file_name)]
     )
     lame_process.wait()
     subprocess.call(
         ["/bin/rm", "{}.raw".format(file_name)]
-    )
-
-def tag(file_name, title, artist):
-    subprocess.call(
-        ["/usr/bin/id3v2",
-        "--artist", artist,
-        "--song", title,
-        "{}.mp3".format(file_name)]
     )
 
 def main():
