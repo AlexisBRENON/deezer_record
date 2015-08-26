@@ -1,54 +1,263 @@
 #!/usr/bin/env python3
-# -*- coding: utf8 -*-
-# All strings are unicode (even docstrings)
-from __future__ import unicode_literals
+"""
+This script allow you to record a audio stream from any application
+and try to cut it on every song, based on the title of a window
+(changing when song changes) and detecting a gap in the audio stream.
+This script heavily relies on some Linux dependencies, like PulseAudio
+or LAME.
+It's first intended to work with Deezer, feel free to adapt it to your
+needs!
+"""
 
-import sys
-import time
 import io
-import struct
-import subprocess
+import os
 import re
-import my_getopt as getopt
+import time
+import struct
+import logging
+import argparse
+import threading
+import subprocess
 
-OPTIONS = [
-    {
-        'name': 'help',
-        'short': 'h',
-        'long': 'help',
-        'optional': True,
-        'arg': False,
-        'desc': "Print this usage message",
-        'default': False
-    },
-    {
-        'name': 'winid',
-        'short': 'i',
-        'long': 'winid',
-        'optional': True,
-        'arg': True,
-        'desc': "X Window ID of the player window",
-        'default': None
-    },
-    {
-        'name': 'title_regex',
-        'short': 'r',
-        'long': 'regex',
-        'optional': True,
-        'arg': True,
-        'desc': "Python Regex for window title parsing (with 'title' and 'artist' group)",
-        'default': '"(?P<title>.+) - (?P<artist>.+) - Google Chrome"'
-    }
-]
 
-def get_x_win_name(winid):
-    xwininfo_process = subprocess.Popen(
-        ["/usr/bin/xprop", "-id", winid, "WM_NAME"],
-        stdout=subprocess.PIPE
+class PulseAudioManager(threading.Thread):
+    """ PulseAudio manager class that load required module, move sinks
+    and restore everything at the end."""
+    def __init__(self, start_barrier, end_event, parec_output_pipe):
+        """ Create a new PulseAudio Manager
+        start_barrier Barrier which synchronize the start of all threads
+        end_barrier Not used for the moment
+        parec_output_pipe Writing end of a pipe where the parec output will
+            be redirected.
+        """
+        super(PulseAudioManager, self).__init__()
+        self.start_barrier = start_barrier
+        self.end_event = end_event
+        self.parec_output_pipe = parec_output_pipe
+        self.sink_input = None
+        self.module_id = None
+
+
+    def move_sink_input(self):
+        """ Let's the user choose a sink to move to the recorder """
+        def _parse_sink_inputs():
+            """ Read PA output to list all available sinks """
+            sink_inputs = {}
+            pacmd_process = subprocess.Popen(
+                ["/usr/bin/pacmd", "list-sink-inputs"],
+                stdout=subprocess.PIPE
+            )
+            for line in pacmd_process.stdout:
+                line = line.decode()
+                sink_index = re.search(r"^\s*index: (.*)", line)
+                if sink_index:
+                    for line in pacmd_process.stdout:
+                        line = line.decode()
+                        app_name = re.search(r"^\s*application.name = \"(.*)\"", line)
+                        if app_name:
+                            sink_inputs[int(sink_index.group(1))] = app_name.group(1)
+                            break
+            return sink_inputs
+
+        # Find which input need to be moved
+        print("Let's play your application... Then press Enter.")
+        _ = input()
+        sink_inputs = _parse_sink_inputs()
+        if len(sink_inputs.keys()) == 1:
+            self.sink_input = list(sink_inputs.keys())[0]
+        else:
+            self.sink_input = select(sink_inputs)
+
+        # Load the null module
+        self.module_id = int(subprocess.check_output(
+            ["/usr/bin/pactl", "load-module", "module-null-sink", "sink_name=deezer_record"]
+        ))
+
+        # Move the sink input
+        subprocess.call(
+            ["/usr/bin/pactl", "move-sink-input", str(self.sink_input), "deezer_record"]
         )
-    return xwininfo_process.communicate()[0].decode()
+
+    def reset_sink_input(self):
+        """ Reset the PA configuration to its initial state """
+        subprocess.call(
+            ["/usr/bin/pactl", "move-sink-input", str(self.sink_input), "1"]
+        )
+        subprocess.call(
+            ["/usr/bin/pactl", "unload-module", str(self.module_id)]
+        )
+
+    def launch_parec(self):
+        """ Actually launch the record of the moved sink """
+        subprocess.Popen(
+            ["/usr/bin/parec", "-d", "deezer_record.monitor"],
+            stdout=self.parec_output_pipe
+        )
+
+    def run(self):
+        self.move_sink_input()
+        logging.info("Start barrier reached")
+        self.start_barrier.wait()
+        self.launch_parec()
+
+        self.end_event.wait()
+        logging.info("End event set")
+        self.reset_sink_input()
+        logging.info("Exit")
+
+class AppInspector(threading.Thread):
+    """ Inspect the Application title to detect song change """
+    def __init__(self, synchronization, data, x_info):
+        super(AppInspector, self).__init__()
+        self.start_barrier = synchronization['start_barrier']
+        self.end_event = synchronization['end_event']
+        self.data = data
+        self.browser_x_winid = x_info['win_id']
+        self.title_regex = x_info['title_regex']
+
+    def get_x_win_title(self):
+        """ Get the title of the application's window """
+        xwininfo_process = subprocess.Popen(
+            ["/usr/bin/xprop", "-id", self.browser_x_winid, "WM_NAME"],
+            stdout=subprocess.PIPE
+            )
+        return xwininfo_process.communicate()[0].decode().split(" = ")[1].strip(" \"")
+
+    def run(self):
+        logging.info("Start barrier reached")
+        self.start_barrier.wait()
+
+        previous_time = time.time()
+        initial_name = self.get_x_win_title()
+        previous_name = initial_name
+        recording_initial = False
+        initial_fully_recorded = False
+
+        logging.info("Initial song = '%s'", initial_name)
+        while not initial_fully_recorded:
+            time.sleep(1)
+            current_name = self.get_x_win_title()
+            # Song has changed
+            if previous_name != current_name and self.title_regex.match(current_name):
+                logging.info("Song changed => '%s'", current_name)
+# We're back to the first song. Let's record it from the beginning
+                if not recording_initial and current_name == initial_name:
+                    logging.info("Re-recording initial song")
+                    recording_initial = True
+# Initial track has been fully measured, break the loop
+                if recording_initial and current_name != initial_name:
+                    logging.info("Initial song recorded. Quit the loop")
+                    initial_fully_recorded = True
+                new_time = time.time()
+                SongWriter(
+                    self.data,
+                    new_time - previous_time,
+                    previous_name,
+                    self.title_regex).start()
+                previous_time = new_time
+                previous_name = current_name
+
+# Stop all threads
+        logging.info("Set end event")
+        self.end_event.set()
+        logging.info("Exit")
+
+class StreamLoader(threading.Thread):
+    """ Thread that load the data from the pipe. It one of the most important one to avoid data
+    leaks. """
+    def __init__(self, start_barrier, end_event, bin_stream_input, raw_data, raw_data_lock):
+        """
+        start_barrier: Barrier to synchronize all the threads
+        end_event: Event to stop all threads
+        bin_stream_input: Reading end of the pipe where parec writes
+        raw_data: Container for the read data
+        raw_data_lock: Lock for raw_data access control
+        """
+        super(StreamLoader, self).__init__()
+        self.start_barrier = start_barrier
+        self.end_event = end_event
+        self.bin_stream_input = bin_stream_input
+        self.raw_data = raw_data
+        self.raw_data_lock = raw_data_lock
+
+    def run(self):
+        bytes_to_read = int((44100/10) * 2 * 2)
+        logging.info("Start barrier reached")
+        self.start_barrier.wait()
+        while not self.end_event.is_set():
+            data = self.bin_stream_input.read(bytes_to_read)
+            with self.raw_data_lock:
+                self.raw_data.extend(data)
+        self.end_event.wait()
+        logging.info("End event set. Exit")
+
+
+class SongWriter(threading.Thread):
+    """
+    This class read raw data, detect the gap and write it to a file in raw.
+    Then it start an encoder to convert it to MP3
+    """
+    def __init__(self, data, length_sec, window_title, title_regex):
+        super(SongWriter, self).__init__()
+        current_name_matching = title_regex.match(window_title)
+        self.title = current_name_matching.group('title')
+        self.artist = current_name_matching.group('artist')
+# TODO: sanitize file name
+        self.file_name = "{}-{}".format(self.artist, self.title).replace("/", "-")
+        self.output_raw_file = io.open("%s.raw" % (self.file_name), 'wb')
+        self.song_length = length_sec
+        self.raw_data = data['raw_data']
+        self.raw_data_lock = data['lock']
+
+    def run(self):
+        # 2 channels of 16 bits (2 bytes) each with 44100 samples per seconds
+        one_second_samples_num = 2 * 2 * 44100
+        song_length = self.song_length
+        copied_length = 0
+
+        logging.info("Writing '%s.raw' on disk", self.file_name)
+        # Copy main part of the song -- until about the last 2 seconds
+        while copied_length < song_length - 2:
+            with self.raw_data_lock:
+                one_second_data = self.raw_data[0:one_second_samples_num]
+                del self.raw_data[0:one_second_samples_num]
+            self.output_raw_file.write(bytes(one_second_data))
+            copied_length += 1
+
+# about 2 seconds of song is resting in raw_data
+# Read at least 3 seconds to detect a silence
+        lasting_raw_data = []
+        while len(lasting_raw_data) < 3*one_second_samples_num:
+            with self.raw_data_lock:
+                lasting_raw_data.extend(
+                    self.raw_data[
+                        len(lasting_raw_data):
+                        len(lasting_raw_data)+one_second_samples_num
+                        ])
+        silence = find_longest_silence(lasting_raw_data)
+# Read more samples until a gap is detected
+        while not silence:
+            with self.raw_data_lock:
+                lasting_raw_data.extend(
+                    self.raw_data[
+                        len(lasting_raw_data):
+                        len(lasting_raw_data)+one_second_samples_num
+                        ])
+            silence = find_longest_silence(lasting_raw_data)
+
+        # The song has changed
+        breaking_sample = silence['cut']
+# Write the end of the song
+        self.output_raw_file.write(bytes(lasting_raw_data[0:breaking_sample]))
+# Delete it from the raw_data
+        with self.raw_data_lock:
+            del self.raw_data[0:breaking_sample]
+
+        logging.info("Converting RAW to MP3 (%s)", self.file_name)
+        encode(self.file_name, self.artist, self.title)
 
 def get_x_win_id():
+    """ Ask the user to click on the window to record and returns its X id """
     print("Click on the player window...")
     xwininfo_process = subprocess.Popen(
         ["/usr/bin/xwininfo"],
@@ -61,6 +270,10 @@ def get_x_win_id():
             return winid_matching.group(1)
 
 def select(choice_list):
+    """ Ask the user to select an option
+    choice_list: The list of options
+    return the index of the choice
+    """
     print("Please select an option :")
     for index, choice in choice_list.items():
         print("\t{}) {}".format(index, choice))
@@ -71,64 +284,24 @@ def select(choice_list):
 
     return choice
 
-def move_sink_input():
-    print("Let's play your application...")
-    _ = input("Then press Enter")
-    pacmd_process = subprocess.Popen(
-        ["/usr/bin/pacmd", "list-sink-inputs"],
-        stdout=subprocess.PIPE
-    )
-    sink_inputs = {}
-    for line in pacmd_process.stdout:
-        line = line.decode()
-        sink_index = re.search("^\s*index: (.*)", line)
-        if sink_index:
-            for line in pacmd_process.stdout:
-                line = line.decode()
-                app_name = re.search("^\s*application.name = \"(.*)\"", line)
-                if app_name:
-                    sink_inputs[int(sink_index.group(1))] = app_name.group(1)
-                    break
-
-    if len(sink_inputs.keys()) == 1:
-        sink_input = list(sink_inputs.keys())[0]
-    else:
-        sink_input = select(sink_inputs)
-    module_id = int(subprocess.check_output(
-        ["/usr/bin/pactl", "load-module", "module-null-sink", "sink_name=deezer_record"]
-    ))
-    subprocess.call(
-        ["/usr/bin/pactl", "move-sink-input", str(sink_input), "deezer_record"]
-    )
-    return (module_id, sink_input)
-
-def reset_sink_input(sink_config):
-    subprocess.call(
-        ["/usr/bin/pactl", "unload-module", str(sink_config[0])]
-    )
-    subprocess.call(
-        ["/usr/bin/pactl", "move-sink-input", str(sink_config[1]), "1"]
-    )
-
-def launch_record():
-    parec_process = subprocess.Popen(
-        ["/usr/bin/parec", "-d", "deezer_record.monitor"],
-        stdout=subprocess.PIPE
-    )
-    return parec_process
 
 def find_longest_silence(samples):
+    """ find the longest silence in a raw stream
+    returns None if no silence is found or a dictionnary, with begin and end keys associated to the
+    index of the beginning and ending samples; length key; cut indexing the sample where to cut. If
+    cut is not present, you're currently in a silence, and more data are required
+    """
     minimal_length = (44100/100)*4
     current_silence = {
-            'begin': None,
-            'end': None,
-            }
+        'begin': None,
+        'end': None,
+        }
     longest_silence = current_silence.copy()
     longest_silence['length'] = 0
     in_silence = False
     index = 0
     while index <= len(samples)-4:
-        sample_value = struct.unpack("hh", samples[index:index+4])
+        sample_value = struct.unpack("hh", bytes(samples[index:index+4]))
         if abs(sample_value[0]) < 0x20 and abs(sample_value[1]) < 0x20:
             if not in_silence:
                 in_silence = True
@@ -143,105 +316,101 @@ def find_longest_silence(samples):
                     longest_silence = current_silence.copy()
         index = index+4
 
-    if longest_silence['length'] > 0:
-        if not in_silence:
-            # Assert that the cut index is on a whole sample
-            longest_silence['length'] = (int(longest_silence['length']/8))*8
-            longest_silence['cut'] = int(longest_silence['begin'] + longest_silence['length']/2)
+    if not in_silence and longest_silence['length'] > 0:
+        # Assert that the cut index is on a whole sample
+        longest_silence['length'] = (int(longest_silence['length']/8))*8
+        longest_silence['cut'] = int(longest_silence['begin'] + longest_silence['length']/2)
         return longest_silence
     else:
         return None
 
-def record_a_song(data, bin_stream_input, win_id, title_regex):
-
-    num_sample = int(44100*4*3)
-
-    win_current_name = get_x_win_name(win_id)
-    current_name_matching = title_regex.search(win_current_name)
-    title = current_name_matching.group('title')
-    artist = current_name_matching.group('artist')
-    file_name = "{}-{}".format(artist, title).replace("/", "-")
-
-    print("Recording {} from {}".format(title, artist))
-
-    raw_file = io.open("{}.raw".format(file_name), "wb")
-    while True:
-        data += bytes(bin_stream_input.read(num_sample))
-
-        # Window's title changed
-        if win_current_name != get_x_win_name(win_id):
-            silence = find_longest_silence(data)
-            if silence:
-                if 'cut' in silence:
-                    breaking_sample = silence['cut']
-                    # The song has changed
-                    raw_file.write(data[:breaking_sample])
-                    raw_file.close()
-                    break
-                else:
-                    raw_file.write(data[:silence['begin']])
-                    data = bytes(data[silence['begin']:])
-        else:
-            raw_file.write(data)
-            data = b''
-
-    encode(file_name, title, artist)
-    return bytes(data[breaking_sample:])
-
-def encode(file_name, title, artist):
-    lame_process = subprocess.Popen(
-        ["/usr/bin/lame", "-r",
-            "-s", "44.1",
-            "--bitwidth", "16",
-            "--signed",
-            "-m", "j",
-            "-h", "-b 256",
-            "--add-id3v2", "--id3v2-utf16",
-            "--tt", title,
-            "--ta", artist,
-            "--noreplaygain",
-            "{}.raw".format(file_name),
-            "{}.mp3".format(file_name)]
-    )
+def encode(file_name, artist, title):
+    """ Encode a raw file to MP3 and add some tag """
+# TODO: add tags parameters
+    lame_process = subprocess.Popen([
+        "/usr/bin/lame", "-r",
+        "-s", "44.1",
+        "-m", "j",
+        "-h",
+        "--add-id3v2",
+        "--ta", artist,
+        "--tt", title,
+        "{}.raw".format(file_name),
+        "{}.mp3".format(file_name)
+        ])
     lame_process.wait()
     subprocess.call(
         ["/bin/rm", "{}.raw".format(file_name)]
     )
 
 def main():
-    options = getopt.parse_opt(sys.argv, OPTIONS)
-    options['title_regex'] = re.compile(options['title_regex'])
-    if not options['winid']:
-        options['winid'] = get_x_win_id()
+    """ Main function, creating interprocess ressources, threads, and launching everything """
+    logging.basicConfig(
+        level=logging.INFO,
+        format="## %(levelname)s ## %(threadName)s ## %(message)s"
+    )
+    arg_parser = argparse.ArgumentParser()
+    arg_parser.add_argument(
+        "--id",
+        help="X Window ID of the windows to record audio from",
+        dest="winid"
+    )
+    arg_parser.add_argument(
+        "--regex",
+        default=r"(?P<title>.+) - (?P<artist>.+) - Google Chrome",
+        help="Regex to extract artist and title from window title (default: %(default)s)",
+    )
+    options = arg_parser.parse_args()
+    title_regex = re.compile(options.regex)
+    if not options.winid:
+        options.winid = get_x_win_id()
 
-    sink_input = move_sink_input()
+    logging.info("Options parsed.")
 
-    try:
-        parec_process = launch_record()
-        time.sleep(1)
-        initial_name = get_x_win_name(options['winid'])
-        initial_recorded = False
+    # Create shared ressources
+    parec_pipe_read_end, parec_pipe_write_end = os.pipe() # create a pipe
+    parec_pipe_read_end = os.fdopen(parec_pipe_read_end, 'rb')
+    parec_pipe_write_end = os.fdopen(parec_pipe_write_end, 'wb')
+    start_barrier = threading.Barrier(3) # A barrier to synchronize thread
+    end_event = threading.Event() # Event set when all data are processed
+    raw_data = list() # Container of the raw data ...
+    raw_data_lock = threading.Lock() # ... and its lock
+    logging.info("Shared ressources initialized.")
 
-        data = b''
-        while initial_recorded == False:
-            data = record_a_song(
-                data,
-                parec_process.stdout,
-                options['winid'],
-                options['title_regex'])
+    # Create threads
+    browser_recorder = PulseAudioManager(start_barrier, end_event, parec_pipe_write_end)
 
-            initial_recorded = (initial_name == get_x_win_name(options['winid']))
+    browser_inspector = AppInspector(
+        {
+            'start_barrier': start_barrier,
+            'end_event': end_event
+        }, {
+            'raw_data' : raw_data,
+            'lock': raw_data_lock
+        }, {
+            'win_id': options.winid,
+            'title_regex': title_regex
+        })
 
-        record_a_song(
-            data,
-            parec_process.stdout,
-            options['winid'],
-            options['title_regex'])
+    stream_loader = StreamLoader(
+        start_barrier,
+        end_event,
+        parec_pipe_read_end,
+        raw_data,
+        raw_data_lock)
 
-        parec_process.kill()
+    logging.info("Threads initialized. Ready for launching")
 
-    finally:
-        reset_sink_input(sink_input)
+    browser_recorder.start()
+    browser_inspector.start()
+    stream_loader.start()
+
+    stream_loader.join()
+    logging.info("%s joined", stream_loader)
+    browser_inspector.join()
+    logging.info("%s joined", browser_inspector)
+    browser_recorder.join()
+    logging.info("%s joined", browser_recorder)
 
 if __name__ == "__main__":
     print("Deezer recording : Welcome\n")
