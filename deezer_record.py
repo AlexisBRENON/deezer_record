@@ -33,6 +33,7 @@ class PulseAudioManager(threading.Thread):
         super(PulseAudioManager, self).__init__()
         self.start_barrier = start_barrier
         self.end_event = end_event
+        self.parec_process = None
         self.parec_output_pipe = parec_output_pipe
         self.sink_input = None
         self.module_id = None
@@ -80,19 +81,25 @@ class PulseAudioManager(threading.Thread):
 
     def reset_sink_input(self):
         """ Reset the PA configuration to its initial state """
+        logging.debug("Reset sink input to its right sink")
         subprocess.call(
             ["/usr/bin/pactl", "move-sink-input", str(self.sink_input), "1"]
         )
+        logging.debug("Unload NULL module")
         subprocess.call(
             ["/usr/bin/pactl", "unload-module", str(self.module_id)]
         )
 
     def launch_parec(self):
         """ Actually launch the record of the moved sink """
-        subprocess.Popen(
+        self.parec_process = subprocess.Popen(
             ["/usr/bin/parec", "-d", "deezer_record.monitor"],
             stdout=self.parec_output_pipe
         )
+
+    def stop_parec(self):
+        """ Stop recording of the stream """
+        self.parec_process.terminate()
 
     def run(self):
         self.move_sink_input()
@@ -102,6 +109,7 @@ class PulseAudioManager(threading.Thread):
 
         self.end_event.wait()
         logging.info("End event set")
+        self.stop_parec()
         self.reset_sink_input()
         logging.info("Exit")
 
@@ -121,7 +129,7 @@ class AppInspector(threading.Thread):
             ["/usr/bin/xprop", "-id", self.browser_x_winid, "WM_NAME"],
             stdout=subprocess.PIPE
             )
-        return xwininfo_process.communicate()[0].decode().split(" = ")[1].strip(" \"")
+        return xwininfo_process.communicate()[0].decode().split(" = ")[1].strip(" \n\"")
 
     def run(self):
         logging.info("Start barrier reached")
@@ -132,6 +140,7 @@ class AppInspector(threading.Thread):
         previous_name = initial_name
         recording_initial = False
         initial_fully_recorded = False
+        last_thread = None
 
         logging.info("Initial song = '%s'", initial_name)
         while not initial_fully_recorded:
@@ -149,17 +158,21 @@ class AppInspector(threading.Thread):
                     logging.info("Initial song recorded. Quit the loop")
                     initial_fully_recorded = True
                 new_time = time.time()
-                SongWriter(
+                last_thread = SongWriter(
                     self.data,
                     new_time - previous_time,
                     previous_name,
-                    self.title_regex).start()
+                    self.title_regex)
+                logging.debug("Launching writer thread : %s", last_thread)
+                last_thread.start()
                 previous_time = new_time
                 previous_name = current_name
 
 # Stop all threads
         logging.info("Set end event")
         self.end_event.set()
+        last_thread.join()
+        logging.debug("%s joined", last_thread)
         logging.info("Exit")
 
 class StreamLoader(threading.Thread):
@@ -189,7 +202,8 @@ class StreamLoader(threading.Thread):
             with self.raw_data_lock:
                 self.raw_data.extend(data)
         self.end_event.wait()
-        logging.info("End event set. Exit")
+        logging.info("End event set")
+        logging.info("Exit")
 
 
 class SongWriter(threading.Thread):
@@ -200,8 +214,8 @@ class SongWriter(threading.Thread):
     def __init__(self, data, length_sec, window_title, title_regex):
         super(SongWriter, self).__init__()
         current_name_matching = title_regex.match(window_title)
-        self.title = current_name_matching.group('title')
-        self.artist = current_name_matching.group('artist')
+        self.title = current_name_matching.group('title')[0:50]
+        self.artist = current_name_matching.group('artist')[0:50]
 # TODO: sanitize file name
         self.file_name = "{}-{}".format(self.artist, self.title).replace("/", "-")
         self.output_raw_file = io.open("%s.raw" % (self.file_name), 'wb')
@@ -214,6 +228,7 @@ class SongWriter(threading.Thread):
         one_second_samples_num = 2 * 2 * 44100
         song_length = self.song_length
         copied_length = 0
+        available_raw_data = 0
 
         logging.info("Writing '%s.raw' on disk", self.file_name)
         # Copy main part of the song -- until about the last 2 seconds
@@ -221,32 +236,43 @@ class SongWriter(threading.Thread):
             with self.raw_data_lock:
                 one_second_data = self.raw_data[0:one_second_samples_num]
                 del self.raw_data[0:one_second_samples_num]
+                available_raw_data = len(self.raw_data)
             self.output_raw_file.write(bytes(one_second_data))
             copied_length += 1
+        logging.debug("Copied %s seconds on %s", copied_length, song_length)
 
 # about 2 seconds of song is resting in raw_data
 # Read at least 3 seconds to detect a silence
         lasting_raw_data = []
-        while len(lasting_raw_data) < 3*one_second_samples_num:
+        while len(lasting_raw_data) < 3*one_second_samples_num and available_raw_data > len(lasting_raw_data):
             with self.raw_data_lock:
+                available_raw_data = len(self.raw_data)
                 lasting_raw_data.extend(
                     self.raw_data[
                         len(lasting_raw_data):
                         len(lasting_raw_data)+one_second_samples_num
                         ])
+            logging.debug("%s bytes read from %s bytes availables", len(lasting_raw_data), available_raw_data)
         silence = find_longest_silence(lasting_raw_data)
 # Read more samples until a gap is detected
-        while not silence:
+        while (not silence) and available_raw_data > len(lasting_raw_data):
             with self.raw_data_lock:
+                available_raw_data = len(self.raw_data)
                 lasting_raw_data.extend(
                     self.raw_data[
                         len(lasting_raw_data):
                         len(lasting_raw_data)+one_second_samples_num
                         ])
+            logging.debug("No silence. More bytes read (%s / %s)", len(lasting_raw_data), available_raw_data)
             silence = find_longest_silence(lasting_raw_data)
 
-        # The song has changed
-        breaking_sample = silence['cut']
+        # cut on the right sample
+        breaking_sample = None
+        if not silence:
+            logging.debug("No silence found. Write all availables data")
+            breaking_sample = len(lasting_raw_data)
+        else:
+            breaking_sample = silence['cut']
 # Write the end of the song
         self.output_raw_file.write(bytes(lasting_raw_data[0:breaking_sample]))
 # Delete it from the raw_data
@@ -255,6 +281,8 @@ class SongWriter(threading.Thread):
 
         logging.info("Converting RAW to MP3 (%s)", self.file_name)
         encode(self.file_name, self.artist, self.title)
+        logging.info("'%s.mp3' saved", self.file_name)
+        logging.info("Exit")
 
 def get_x_win_id():
     """ Ask the user to click on the window to record and returns its X id """
@@ -332,6 +360,7 @@ def encode(file_name, artist, title):
         "-s", "44.1",
         "-m", "j",
         "-h",
+        "--quiet",
         "--add-id3v2",
         "--ta", artist,
         "--tt", title,
@@ -345,10 +374,6 @@ def encode(file_name, artist, title):
 
 def main():
     """ Main function, creating interprocess ressources, threads, and launching everything """
-    logging.basicConfig(
-        level=logging.INFO,
-        format="## %(levelname)s ## %(threadName)s ## %(message)s"
-    )
     arg_parser = argparse.ArgumentParser()
     arg_parser.add_argument(
         "--id",
@@ -357,15 +382,27 @@ def main():
     )
     arg_parser.add_argument(
         "--regex",
-        default=r"(?P<title>.+) - (?P<artist>.+) - Google Chrome",
+        default=r"(?P<title>.+) - (?P<artist>.+) - .*",
         help="Regex to extract artist and title from window title (default: %(default)s)",
+    )
+    arg_parser.add_argument(
+        "--debug", "-d",
+        help="Show debug info",
+        action="store_const",
+        default=logging.INFO,
+        const=logging.DEBUG
     )
     options = arg_parser.parse_args()
     title_regex = re.compile(options.regex)
     if not options.winid:
         options.winid = get_x_win_id()
 
-    logging.info("Options parsed.")
+    logging.basicConfig(
+        level=options.debug,
+        format="## %(levelname)s ## %(threadName)s ## %(message)s"
+    )
+    logging.info("Options parsed")
+    logging.debug("Debug output activated")
 
     # Create shared ressources
     parec_pipe_read_end, parec_pipe_write_end = os.pipe() # create a pipe
@@ -375,7 +412,7 @@ def main():
     end_event = threading.Event() # Event set when all data are processed
     raw_data = list() # Container of the raw data ...
     raw_data_lock = threading.Lock() # ... and its lock
-    logging.info("Shared ressources initialized.")
+    logging.info("Shared ressources initialized")
 
     # Create threads
     browser_recorder = PulseAudioManager(start_barrier, end_event, parec_pipe_write_end)
@@ -411,8 +448,7 @@ def main():
     logging.info("%s joined", browser_inspector)
     browser_recorder.join()
     logging.info("%s joined", browser_recorder)
+    logging.info("Exit")
 
 if __name__ == "__main__":
-    print("Deezer recording : Welcome\n")
     main()
-    print("\nDeezer recording : Bye")
