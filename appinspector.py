@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""
+Implementation of the class watching the playing application
+"""
+
+import time
+import logging
+import threading
+import subprocess
+
+class AppInspector(threading.Thread):
+    """ Inspect the Application title to detect song change """
+    def __init__(self, synchronization, data, x_info):
+        super(AppInspector, self).__init__()
+        self.thread_start = synchronization['start']
+        self.thread_end = synchronization['end']
+        self.data = data
+        self.browser_x_winid = x_info['win_id']
+        self.title_regex = x_info['title_regex']
+
+    def get_x_win_title(self):
+        """ Get the title of the application's window """
+        xwininfo_process = subprocess.Popen(
+            ["/usr/bin/xprop", "-id", self.browser_x_winid, "WM_NAME"],
+            stdout=subprocess.PIPE
+            )
+        return xwininfo_process.communicate()[0].decode().split(" = ")[1].strip(" \n\"")
+
+    def run(self):
+        logging.info("Start barrier reached")
+        self.thread_start.wait()
+
+        previous_time = time.time()
+        initial_name = self.get_x_win_title()
+        previous_name = initial_name
+        recording_initial = False
+        initial_fully_recorded = False
+        last_thread = None
+
+        logging.info("Initial song = '%s'", initial_name)
+        while not initial_fully_recorded:
+            time.sleep(1)
+            current_name = self.get_x_win_title()
+            # Song has changed
+            if previous_name != current_name and self.title_regex.match(current_name):
+                logging.info("Song changed => '%s'", current_name)
+# We're back to the first song. Let's record it from the beginning
+                if not recording_initial and current_name == initial_name:
+                    logging.info("Re-recording initial song")
+                    recording_initial = True
+# Initial track has been fully measured, break the loop
+                if recording_initial and current_name != initial_name:
+                    logging.info("Initial song recorded. Quit the loop")
+                    initial_fully_recorded = True
+                new_time = time.time()
+                last_thread = SongWriter(
+                    self.data,
+                    new_time - previous_time,
+                    previous_name,
+                    self.title_regex)
+                logging.debug("Launching writer thread : %s", last_thread)
+                last_thread.start()
+                previous_time = new_time
+                previous_name = current_name
+
+# Stop all threads
+        logging.info("Set end event")
+        self.thread_end.set()
+        last_thread.join()
+        logging.debug("%s joined", last_thread)
+        logging.info("Exit")
