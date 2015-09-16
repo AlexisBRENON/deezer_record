@@ -111,6 +111,7 @@ class PulseAudioManager(threading.Thread):
         logging.info("End event set")
         self.stop_parec()
         self.reset_sink_input()
+        self.parec_output_pipe.close()
         logging.info("Exit")
 
 class AppInspector(threading.Thread):
@@ -231,8 +232,8 @@ class SongWriter(threading.Thread):
         available_raw_data = 0
 
         logging.info("Writing '%s.raw' on disk", self.file_name)
-        # Copy main part of the song -- until about the last 2 seconds
-        while copied_length < song_length - 2:
+        # Copy main part of the song -- until about the last 10 seconds
+        while copied_length < song_length - 10:
             with self.raw_data_lock:
                 one_second_data = self.raw_data[0:one_second_samples_num]
                 del self.raw_data[0:one_second_samples_num]
@@ -241,19 +242,9 @@ class SongWriter(threading.Thread):
             copied_length += 1
         logging.debug("Copied %s seconds on %s", copied_length, song_length)
 
-# about 2 seconds of song is resting in raw_data
-# Read at least 3 seconds to detect a silence
+
         lasting_raw_data = []
-        while len(lasting_raw_data) < 3*one_second_samples_num and available_raw_data > len(lasting_raw_data):
-            with self.raw_data_lock:
-                available_raw_data = len(self.raw_data)
-                lasting_raw_data.extend(
-                    self.raw_data[
-                        len(lasting_raw_data):
-                        len(lasting_raw_data)+one_second_samples_num
-                        ])
-            logging.debug("%s bytes read from %s bytes availables", len(lasting_raw_data), available_raw_data)
-        silence = find_longest_silence(lasting_raw_data)
+        silence = None
 # Read more samples until a gap is detected
         while (not silence) and available_raw_data > len(lasting_raw_data):
             with self.raw_data_lock:
@@ -319,7 +310,7 @@ def find_longest_silence(samples):
     index of the beginning and ending samples; length key; cut indexing the sample where to cut. If
     cut is not present, you're currently in a silence, and more data are required
     """
-    minimal_length = (44100/100)*4
+    minimal_length = (44100/200)*4
     current_silence = {
         'begin': None,
         'end': None,
