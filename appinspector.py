@@ -11,9 +11,10 @@ import subprocess
 class AppInspector(threading.Thread):
     """ Inspect the Application title to detect song change """
     def __init__(self, synchronization, data, x_info):
-        super(AppInspector, self).__init__()
+        super(AppInspector, self).__init__(name="Application Inspector")
         self.thread_start = synchronization['start']
         self.thread_end = synchronization['end']
+        self.task_queue = synchronization['tasks']
         self.data = data
         self.browser_x_winid = x_info['win_id']
         self.title_regex = x_info['title_regex']
@@ -35,7 +36,6 @@ class AppInspector(threading.Thread):
         previous_name = initial_name
         recording_initial = False
         initial_fully_recorded = False
-        last_thread = None
 
         logging.info("Initial song = '%s'", initial_name)
         while not initial_fully_recorded:
@@ -53,19 +53,24 @@ class AppInspector(threading.Thread):
                     logging.info("Initial song recorded. Quit the loop")
                     initial_fully_recorded = True
                 new_time = time.time()
-                last_thread = SongWriter(
-                    self.data,
-                    new_time - previous_time,
-                    previous_name,
-                    self.title_regex)
-                logging.debug("Launching writer thread : %s", last_thread)
-                last_thread.start()
+
+                matching = self.title_regex.match(previous_name)
+                task = {
+                    'id': new_time,
+                    'length': new_time-previous_time,
+                    'infos': {
+                        'title': matching.group('title'),
+                        'artist': matching.group('artist')
+                    }
+                }
+                logging.debug("Adding a 'writing' task")
+                self.task_queue.put(task)
                 previous_time = new_time
                 previous_name = current_name
 
-# Stop all threads
+        # Stop all threads
         logging.info("Set end event")
         self.thread_end.set()
-        last_thread.join()
-        logging.debug("%s joined", last_thread)
+        self.task_queue.join()
+        logging.debug("%s joined", self.task_queue)
         logging.info("Exit")

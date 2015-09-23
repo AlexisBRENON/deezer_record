@@ -1,6 +1,6 @@
 # Deezer Record
 
-This project is a dirty Python script which allow you to record the output of music streaming service, cutting the audio stream for each song.
+This project is a Python script which allow you to record the output of music streaming service, cutting the audio stream for each song.
 
 It's initially done for [Deezer](www.deezer.fr), extracting song title and artist from the title of the browser window, but it can probably be updated for any site like YouTube, Spotify, etc.
 

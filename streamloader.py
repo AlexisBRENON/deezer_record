@@ -15,11 +15,11 @@ class StreamLoader(threading.Thread):
         bin_stream_input: Reading end of the pipe where parec writes
         raw_data: Dictionnary with list and its lock
         """
-        super(StreamLoader, self).__init__()
-        self.thread_start = start_barrier
-        self.thread_end = end_event
+        super(StreamLoader, self).__init__(name="Stream Loader")
+        self.thread_start = thread_synchronization['start']
+        self.thread_end = thread_synchronization['end']
         self.bin_stream_input = bin_stream_input
-        self.raw_data = raw_data['data']
+        self.raw_data = raw_data['raw_data']
         self.raw_data_lock = raw_data['lock']
 
     def run(self):

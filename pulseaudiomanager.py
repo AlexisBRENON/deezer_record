@@ -3,9 +3,25 @@
 Main PulseAudio manager implementation
 """
 
+import re
 import logging
 import threading
 import subprocess
+
+def select(choice_list):
+    """ Ask the user to select an option
+    choice_list: The list of options
+    return the index of the choice
+    """
+    print("Please select an option :")
+    for index, choice in choice_list.items():
+        print("\t{}) {}".format(index, choice))
+    choice = int(input("-> "))
+    while not choice in choice_list:
+        print("Invalid value")
+        choice = int(input("-> "))
+
+    return choice
 
 class PulseAudioManager(threading.Thread):
     """ PulseAudio manager class that load required module, move sinks
@@ -16,7 +32,7 @@ class PulseAudioManager(threading.Thread):
         parec_output_pipe Writing end of a pipe where the parec output will
             be redirected.
         """
-        super(PulseAudioManager, self).__init__()
+        super(PulseAudioManager, self).__init__(name="PulseAudio Manager")
         self.thread_start = thread_synchronization['start']
         self.thread_end = thread_synchronization['end']
         self.parec_process = None
