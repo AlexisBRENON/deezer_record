@@ -3,6 +3,7 @@
 Implementation of different standard encoders
 """
 
+import os
 import subprocess
 
 class Encoder:
@@ -10,6 +11,23 @@ class Encoder:
     Encoder interface.
     An encoder must be able to encode raw data file to another format.
     """
+
+    SUPPORTED_TAGS = {}
+
+    @classmethod
+    def get_filename(cls, infos):
+        """
+        Return a default file name from infos
+        """
+        if infos and infos['title'] and infos['artist']:
+            filename = infos['artist'][0:50]
+            filename += "-"
+            filename += infos['title'][0:50]
+            filename.replace("/", "-")
+            filename.replace("\0", "-")
+            return filename
+        else:
+            return None
 
     def __init__(self, keep_raw=False):
         self.keep_raw = keep_raw
@@ -29,35 +47,41 @@ class Encoder:
                 ["/bin/rm", "{}.raw".format(basename)]
             )
 
-    def get_filename(self, infos):
+class DebugEncoder(Encoder):
+    """
+    Dummy encoder which only monitor calls. It is primarily used for test purpose.
+    """
+
+    def __init__(self):
+        super(DebugEncoder, self).__init__()
+        self.encoded = {}
+
+    def encode(self, basename, infos):
+        self.encoded[basename] = os.stat("{}.raw".format(basename))
+
+    def clear(self):
         """
-        Return a default file name from infos
+        Delete all raw files monitored by the encoder.
         """
-        if infos and infos['title'] and infos['artist']:
-            filename = infos['artist'][0:50]
-            filename += "-"
-            filename += infos['title'][0:50]
-            filename.replace("/", "-")
-            filename.replace("\0", "-")
-            return filename
-        else:
-            return None
+        for basename in self.encoded.keys():
+            self.delete_raw(basename)
+        self.encoded.clear()
 
 class Mp3LameEncoder(Encoder):
     """
     MP3 Encoder implementation based on lame
     """
+    SUPPORTED_TAGS = {
+        "title": "--tt",
+        "artist": "--ta",
+        "album": "--tl",
+        "year": "--ty",
+        "comment": "--tc",
+        "track": "--tn",
+        "genre": "--tg"
+    }
     def __init__(self, keep_raw=False):
         super(Mp3LameEncoder, self).__init__(keep_raw)
-        self.SUPPORTED_TAGS = {
-            "title": "--tt",
-            "artist": "--ta",
-            "album": "--tl",
-            "year": "--ty",
-            "comment": "--tc",
-            "track": "--tn",
-            "genre": "--tg"
-            }
 
     def encode(self, basename, infos):
         cmd = [
@@ -80,7 +104,7 @@ class Mp3LameEncoder(Encoder):
                     cmd.append(value)
 
         cmd.append("{}.raw".format(basename))
-        filename = self.get_filename(infos)
+        filename = Encoder.get_filename(infos)
         if not filename:
             filename = basename
         cmd.append("{}.mp3".format(filename))
@@ -94,25 +118,26 @@ class FlacEncoder(Encoder):
     Flac encoder implementation
     """
 
+    SUPPORTED_TAGS = {
+        "title": "TITLE",
+        "artist": "ARTIST",
+        "album": "ALBUM",
+        "year": "DATE",
+        "comment": "DESCRIPTION",
+        "track": "TRACKNUMBER",
+        "genre": "GENRE",
+        "version": "VERSION",
+        "performer": "PERFORMER",
+        "copyright": "COPYRIGHT",
+        "license": "LICENSE",
+        "organization": "ORGANIZATION",
+        "location": "LOCATION",
+        "contact": "CONTACT",
+        "isrc": "ISRC"
+    }
+
     def __init__(self, keep_raw=False):
         super(FlacEncoder, self).__init__(keep_raw)
-        self.SUPPORTED_TAGS = {
-            "title": "TITLE",
-            "artist": "ARTIST",
-            "album": "ALBUM",
-            "year": "DATE",
-            "comment": "DESCRIPTION",
-            "track": "TRACKNUMBER",
-            "genre": "GENRE",
-            "version": "VERSION",
-            "performer": "PERFORMER",
-            "copyright": "COPYRIGHT",
-            "license": "LICENSE",
-            "organization": "ORGANIZATION",
-            "location": "LOCATION",
-            "contact": "CONTACT",
-            "isrc": "ISRC"
-            }
 
     def encode(self, basename, infos):
         cmd = [
