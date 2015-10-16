@@ -228,15 +228,16 @@ def test_long_track(shared_ressources):
     silence_part = 5*(44100*2*2)
     length = silence_part + part + silence_part
 
+    print("Creating long stream of data...")
     from random import randint
     for _ in range(0, silence_part):
         data['raw_data'].append(0)
     for _ in range(0, part):
-        data['raw_data'].append(randint(128, 255))
+        data['raw_data'].append(200)
     for _ in range(0, int(2 * silence_part)):
         data['raw_data'].append(0)
-    for _ in range(0, randint(44100*2*2, 44100*2*2*2)):
-        data['raw_data'].append(randint(128, 255))
+    for _ in range(0, int(2 * silence_part)):
+        data['raw_data'].append(200)
 
     songwriter = SongWriter(synchronization, data, encoder)
     songwriter.start()

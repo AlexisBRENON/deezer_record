@@ -20,20 +20,29 @@ def round_on_sample(byte_index, channels=2, channel_bytes_width=2):
         byte_index -= 1
     return byte_index
 
-def find_longest_silence(data, threshold=0x0020):
+def find_longest_silence(data, previous_result=None, threshold=0x0020, minimal_length=0.05):
     """ find the longest silence in a raw stream.
-        returns None if no silence is found
-        returns A dictionnary, with 'begin', 'end', 'length' and 'cut'
+        previous_result: Result returns from the previous call. This allow the function to start
+        from the last point instead of computing same silences many times.
+        threshold: minimal absolute value of a sample under which you consider it's a silence
+        minimal_length: minimal length in seconds of a silence to detect
+        returns A dictionnary with 'found' and 'longest_silence' keys
     """
-    minimal_length = (44100/100)*5 # Silence under this time is not kept
-    current_silence = {
-        'begin': None,
-        'end': None,
-        }
-    longest_silence = current_silence.copy() # Longest silence found
-    longest_silence['length'] = 0
-    in_silence = False # Indicator if we still are in a silence
-    index = 0 # Loop index
+    minimal_length = (44100 * 2 * 2) * minimal_length
+    if not previous_result:
+        current_silence = {
+            'begin': None,
+            'end': None,
+            }
+        longest_silence = current_silence.copy() # Longest silence found
+        longest_silence['length'] = 0
+        in_silence = False # Indicator if we still are in a silence
+        index = 0 # Loop index
+    else:
+        current_silence = previous_result['current_silence']
+        longest_silence = previous_result['longest_silence']
+        in_silence = previous_result['state']['in_silence']
+        index = previous_result['state']['index']
 
     while index <= len(data)-4:
         # 1 sample is 4 bytes (2 2-bytes channels)
@@ -72,9 +81,17 @@ def find_longest_silence(data, threshold=0x0020):
             longest_silence['begin'] +
             longest_silence['length']/2
         )
-        return longest_silence
+        result = {'found': True}
     else:
-        return None
+        result = {'found': False}
+
+    result['state'] = {
+        'index': index,
+        'in_silence': in_silence
+        }
+    result['longest_silence'] = longest_silence
+    result['current_silence'] = current_silence
+    return result
 
 class SongWriter(threading.Thread):
     """
@@ -125,7 +142,8 @@ class SongWriter(threading.Thread):
             # Read more samples until a gap is detected
             with self.raw_data_lock:
                 len_available_raw_data = len(self.raw_data)
-            while (not silence) and len_available_raw_data > len(lasting_raw_data):
+            silence = find_longest_silence(lasting_raw_data)
+            while (not silence['found']) and len_available_raw_data > len(lasting_raw_data):
                 # Make sure that the next song has actually started before looking for a gap
                 time.sleep(5)
                 with self.raw_data_lock:
@@ -138,15 +156,15 @@ class SongWriter(threading.Thread):
                 logging.debug(
                     "No silence found. More bytes read (%s / %s)",
                     len(lasting_raw_data), len_available_raw_data)
-                silence = find_longest_silence(lasting_raw_data)
+                silence = find_longest_silence(lasting_raw_data, silence)
 
-            if not silence:
+            if not silence['found']:
                 # No silence detected, we probably are at the end of the playlist,
                 # write all data loaded
                 logging.debug("No silence found. Write all availables data")
                 breaking_byte = len(lasting_raw_data)
             else:
-                breaking_byte = silence['cut']
+                breaking_byte = silence['longest_silence']['cut']
             # Write the end of the song
             output_file.write(bytes(lasting_raw_data[0:breaking_byte]))
             # Delete it from the raw_data
