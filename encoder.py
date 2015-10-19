@@ -86,7 +86,7 @@ class Mp3LameEncoder(Encoder):
     def encode(self, basename, infos):
         cmd = [
             "/usr/bin/lame",
-            "--quiet"
+            "--quiet",
             # Input data
             "-r", # Use lame with raw input
             "-s", "44.1", # Raw is sample at 44100Hz
@@ -101,7 +101,7 @@ class Mp3LameEncoder(Encoder):
             for key, value in infos.items():
                 if key in self.SUPPORTED_TAGS.keys():
                     cmd.append(self.SUPPORTED_TAGS[key])
-                    cmd.append(value)
+                    cmd.append(str(value))
 
         cmd.append("{}.raw".format(basename))
         filename = Encoder.get_filename(infos)
@@ -157,7 +157,7 @@ class FlacEncoder(Encoder):
                 if key in self.SUPPORTED_TAGS.keys():
                     cmd.append("-T")
                     cmd.append("{}={}".format(
-                        self.SUPPORTED_TAGS[key], value))
+                        self.SUPPORTED_TAGS[key], str(value)))
 
         cmd.append("-f") # Override already existing file
         filename = self.get_filename(infos)
