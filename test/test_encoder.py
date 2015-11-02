@@ -54,3 +54,17 @@ def test_mp3_lame_encoder_tags(raw_file, tags):
     # TODO : check tags
     assert False
     os.unlink("{}.mp3".format(encoder.get_filename(tags)))
+
+def test_flac_encoder(raw_file):
+    encoder = encoders.FlacEncoder(keep_raw=True)
+    encoder.encode("0", None)
+    # TODO : check existence and compute the length of the resulting file
+    assert False
+    os.unlink("0.mp3")
+
+def test_flac_encoder_tags(raw_file, tags):
+    encoder = encoders.FlacEncoder(keep_raw=True)
+    encoder.encode("0", tags)
+    # TODO : check tags
+    assert False
+    os.unlink("{}.flac".format(encoder.get_filename(tags)))

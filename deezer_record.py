@@ -50,6 +50,13 @@ def main():
         help="Regex to extract artist and title from window title (default: %(default)s)",
     )
     arg_parser.add_argument(
+        "--encoder",
+        help="Choose which encoder to use. (Activate FLAC encoder for the moment...)",
+        action="store_const",
+        default=encoder.Mp3LameEncoder,
+        const=encoder.FlacEncoder
+    )
+    arg_parser.add_argument(
         "--debug", "-d",
         help="Show debug info",
         action="store_const",
@@ -77,7 +84,7 @@ def main():
     task_queue = queue.Queue() # Thread safe queue for interprocess communication
     raw_data = list() # Container of the raw data ...
     raw_data_lock = threading.Lock() # ... and its lock
-    audio_encoder = encoder.Mp3LameEncoder()
+    audio_encoder = options.encoder()
     logging.info("Shared ressources initialized")
 
     # Create threads
