@@ -104,6 +104,16 @@ class SongWriter(threading.Thread):
         self.raw_data = data['raw_data']
         self.raw_data_lock = data['lock']
         self.encoder = encoder
+        logging.debug(self)
+
+    def __str__(self):
+        me = {}
+        me["synchronization"] = repr(self.synchronization)
+        me["raw_data"] = repr(self.raw_data)
+        me["raw_data_lock"] = repr(self.raw_data_lock)
+        me["encoder"] = repr(self.encoder)
+        import json
+        return "{}({}){}".format(self.name, self.ident, json.dumps(me))
 
     def write_data(self, file_name, length):
         """ Write data for ONE song on disk as raw.
@@ -119,14 +129,20 @@ class SongWriter(threading.Thread):
         with io.open("{}.raw".format(file_name), 'wb') as output_file:
             logging.info("Writing '%s.raw' on disk", file_name)
             # Copy main part of the song (90%)
+            main_part_length = round_on_sample(int((length*0.9)*one_second_samples_num))
             with self.raw_data_lock:
                 len_available_raw_data = len(self.raw_data)
-            main_part_length = round_on_sample(int((length*0.9)*one_second_samples_num))
+            logging.debug("Available samples : %d", len_available_raw_data)
+            logging.debug("Main part length : %d", main_part_length)
             # Wait until sufficiently data are loaded
             while len_available_raw_data < main_part_length:
+                logging.debug("Sleep 1 second...")
                 time.sleep(1)
                 with self.raw_data_lock:
                     len_available_raw_data = len(self.raw_data)
+                logging.debug("Available samples : %d", len_available_raw_data)
+                logging.debug("Main part length : %d", main_part_length)
+
 
             with self.raw_data_lock:
                 output_file.write(bytes(self.raw_data[0:main_part_length]))

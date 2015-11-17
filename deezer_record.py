@@ -79,7 +79,7 @@ def main():
     parec_pipe_read_end, parec_pipe_write_end = os.pipe() # create a pipe
     parec_pipe_read_end = os.fdopen(parec_pipe_read_end, 'rb')
     parec_pipe_write_end = os.fdopen(parec_pipe_write_end, 'wb')
-    start_barrier = threading.Barrier(3) # A barrier to synchronize thread
+    start_barrier = threading.Barrier(4) # A barrier to synchronize thread
     end_event = threading.Event() # Event set when all data are processed
     task_queue = queue.Queue() # Thread safe queue for interprocess communication
     raw_data = list() # Container of the raw data ...
@@ -138,14 +138,20 @@ def main():
     stream_loader.start()
     song_writer.start()
 
-    stream_loader.join()
-    logging.info("%s joined", stream_loader)
-    browser_inspector.join()
-    logging.info("%s joined", browser_inspector)
     browser_recorder.join()
-    logging.info("%s joined", browser_recorder)
+    logging.info("%s joined", repr(browser_recorder))
+    parec_pipe_write_end.close()
+
+    stream_loader.join()
+    logging.info("%s joined", repr(stream_loader))
+    parec_pipe_read_end.close()
+
+    browser_inspector.join()
+    logging.info("%s joined", repr(browser_inspector))
+
     song_writer.join()
-    logging.info("%s joined", song_writer)
+    logging.info("%s joined", repr(song_writer))
+
     logging.info("Exit")
 
 if __name__ == "__main__":

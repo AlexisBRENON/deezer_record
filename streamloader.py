@@ -21,6 +21,17 @@ class StreamLoader(threading.Thread):
         self.bin_stream_input = bin_stream_input
         self.raw_data = raw_data['raw_data']
         self.raw_data_lock = raw_data['lock']
+        logging.debug(self)
+
+    def __str__(self):
+        me = {}
+        me["thread_start"] = repr(self.thread_start)
+        me["thread_end"] = repr(self.thread_end)
+        me["stream_input"] = repr(self.bin_stream_input)
+        me["raw_data"] = repr(self.raw_data)
+        me["raw_data_lock"] = repr(self.raw_data_lock)
+        import json
+        return "{}({}){}".format(self.name, self.ident, json.dumps(me))
 
     def run(self):
         bytes_to_read = int((44100/10) * 2 * 2)
