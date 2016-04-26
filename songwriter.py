@@ -20,7 +20,7 @@ def round_on_sample(byte_index, channels=2, channel_bytes_width=2):
         byte_index -= 1
     return byte_index
 
-def find_longest_silence(data, previous_result=None, threshold=0x0020, minimal_length=0.05):
+def find_longest_silence(data, previous_result=None, threshold=0x0010, minimal_length=0.1):
     """ find the longest silence in a raw stream.
         previous_result: Result returns from the previous call. This allow the function to start
         from the last point instead of computing same silences many times.

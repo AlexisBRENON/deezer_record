@@ -93,7 +93,8 @@ class Mp3LameEncoder(Encoder):
             "--bitwidth", "16", # With 16 bits samples
             # Output spec
             "-m", "j", # Encode in joint stereo
-            "-h" # Use a quiet good encoding quality
+            "-h", # Use a quiet good encoding quality
+            "-V", "6" # Use a variable bitrate
             ]
 
         if infos:
