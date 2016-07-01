@@ -5,6 +5,7 @@ Implementation of the thread writing raw data on disk with right name
 
 import io
 import time
+import queue
 import struct
 import logging
 import threading
@@ -188,20 +189,31 @@ class SongWriter(threading.Thread):
                 del self.raw_data[0:breaking_byte]
 
     def run(self):
+        task = None
         logging.info("Start barrier reached")
         self.synchronization['start'].wait()
 
         while not (
                 self.synchronization['end'].is_set() and
                 self.synchronization['tasks'].empty()):
-            task = self.synchronization['tasks'].get()
-            self.write_data(task['id'], task['length'])
+            # TODO : stop waiting if appinspector stopped without putting task
+            while task is None:
+                try:
+                    task = self.synchronization['tasks'].get(timeout=10)
+                except queue.Empty:
+                    if self.synchronization['end'].is_set():
+                        break
+                    else:
+                        pass
+            if task is not None:
+                self.write_data(task['id'], task['length'])
 
-            logging.info("Calling encode to convert %s", task['id'])
-            self.encoder.encode(
-                task['id'],
-                task['infos'])
-            self.synchronization['tasks'].task_done()
+                logging.info("Calling encode to convert %s", task['id'])
+                self.encoder.encode(
+                    task['id'],
+                    task['infos'])
+                self.synchronization['tasks'].task_done()
+                task = None
 
         logging.info("End Event Set")
         logging.info("Exit")

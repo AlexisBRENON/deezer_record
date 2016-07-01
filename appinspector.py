@@ -10,7 +10,7 @@ import subprocess
 
 class AppInspector(threading.Thread):
     """ Inspect the Application title to detect song change """
-    def __init__(self, synchronization, data, x_info):
+    def __init__(self, synchronization, data, x_info, continuous=False):
         super(AppInspector, self).__init__(name="Application Inspector")
         self.thread_start = synchronization['start']
         self.thread_end = synchronization['end']
@@ -18,6 +18,7 @@ class AppInspector(threading.Thread):
         self.data = data
         self.browser_x_winid = x_info['win_id']
         self.title_regex = x_info['title_regex']
+        self.continuous = continuous
 
     def get_x_win_title(self):
         """ Get the title of the application's window """
@@ -37,8 +38,16 @@ class AppInspector(threading.Thread):
         recording_initial = False
         initial_fully_recorded = False
 
-        logging.info("Initial song = '%s'", initial_name)
-        while not initial_fully_recorded:
+        if not self.continuous:
+            logging.info("Recording until '%s' plays another time", initial_name)
+        else:
+            logging.info("Recording infinitely")
+
+        while ((self.continuous and not self.thread_end.is_set()) or
+                (not self.continuous and (
+                    not (initial_fully_recorded or self.thread_end.is_set())
+                ))
+            ):
             time.sleep(1)
             current_name = self.get_x_win_title()
             # Song has changed
@@ -46,11 +55,11 @@ class AppInspector(threading.Thread):
                 logging.info("Song changed => '%s'", current_name)
 # We're back to the first song. Let's record it from the beginning
                 if not recording_initial and current_name == initial_name:
-                    logging.info("Re-recording initial song")
+                    logging.debug("Re-recording initial song")
                     recording_initial = True
 # Initial track has been fully measured, break the loop
                 if recording_initial and current_name != initial_name:
-                    logging.info("Initial song recorded. Quit the loop")
+                    logging.debug("Initial song recorded. Quit the loop")
                     initial_fully_recorded = True
                 new_time = time.time()
 

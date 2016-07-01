@@ -63,6 +63,11 @@ def main():
         default=logging.INFO,
         const=logging.DEBUG
     )
+    arg_parser.add_argument(
+        "--continuous", "-c",
+        help="Record infinitely",
+        action="store_true"
+    )
     options = arg_parser.parse_args()
     title_regex = re.compile(options.regex)
     if not options.winid:
@@ -106,7 +111,8 @@ def main():
         }, {
             'win_id': options.winid,
             'title_regex': title_regex
-        })
+        },
+        options.continuous)
 
     stream_loader = StreamLoader(
         {
@@ -137,6 +143,11 @@ def main():
     browser_inspector.start()
     stream_loader.start()
     song_writer.start()
+
+    try:
+        end_event.wait()
+    except KeyboardInterrupt:
+        end_event.set()
 
     browser_recorder.join()
     logging.info("%s joined", repr(browser_recorder))
