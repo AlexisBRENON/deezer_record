@@ -43,15 +43,17 @@ class AppInspector(threading.Thread):
         else:
             logging.info("Recording infinitely")
 
+        time.sleep(1)
+
         while ((self.continuous and not self.thread_end.is_set()) or
                 (not self.continuous and (
                     not (initial_fully_recorded or self.thread_end.is_set())
                 ))
             ):
-            time.sleep(1)
             current_name = self.get_x_win_title()
             # Song has changed
             if previous_name != current_name and self.title_regex.match(current_name):
+                new_time = time.time()
                 logging.info("Song changed => '%s'", current_name)
 # We're back to the first song. Let's record it from the beginning
                 if not recording_initial and current_name == initial_name:
@@ -61,7 +63,6 @@ class AppInspector(threading.Thread):
                 if recording_initial and current_name != initial_name:
                     logging.debug("Initial song recorded. Quit the loop")
                     initial_fully_recorded = True
-                new_time = time.time()
 
                 matching = self.title_regex.match(previous_name)
                 task = {
@@ -76,6 +77,8 @@ class AppInspector(threading.Thread):
                 self.task_queue.put(task)
                 previous_time = new_time
                 previous_name = current_name
+            else:
+                time.sleep(1)
 
         # Stop all threads
         logging.info("Set end event")
