@@ -4,6 +4,7 @@ Implementation of the thread writing raw data on disk with right name
 """
 
 import io
+import math
 import time
 import queue
 import struct
@@ -94,6 +95,41 @@ def find_longest_silence(data, previous_result=None, threshold=0x0010, minimal_l
     result['current_silence'] = current_silence
     return result
 
+def find_breaking_byte(raw_data, minimal_length=0.1):
+    raw_data = list(reversed(raw_data)) # Start from the end of the data
+    one_second_samples_num = 2 * 2 * 44100 # Number of bytes in one second
+    window_width = (minimal_length * one_second_samples_num)
+    number_of_windows = int(2*(math.ceil(len(raw_data) / window_width)))
+    signal_power = []
+
+    for i in range(0, number_of_windows):
+        window_start = int(math.floor(i * (window_width/2)))
+        window_end = int(math.ceil(window_start + window_width))
+        signal_power.append(sum([
+            math.pow(x, 2) for x in raw_data[window_start:window_end]
+        ]) / window_width)
+
+    # TODO: do some recursive research with smaller window width
+
+    minimal_signal_power = min(signal_power)
+    break_start = None
+    break_end = None
+    for i, power in enumerate(signal_power):
+        if power == minimal_signal_power:
+            break_start = i if break_start is None else break_start
+            break_end = i if (break_end is None or break_end == i-1) else break_end
+        else:
+            if break_start is not None and break_end is not None and break_end != i-1:
+                break
+
+    break_start = break_start * (window_width/2)
+    break_end = break_end * (window_width/2) + window_width
+    break_start = len(raw_data)-(break_start+1)
+    break_end = len(raw_data)-(break_end+1)
+    breaking_byte = round_on_sample(int(round((break_start + break_end)/2)))
+
+    return breaking_byte
+
 class SongWriter(threading.Thread):
     """
     This class read raw data, detect the gap and write it to a file in raw.
@@ -129,8 +165,9 @@ class SongWriter(threading.Thread):
 
         with io.open("{}.raw".format(file_name), 'wb') as output_file:
             logging.info("Writing '%s.raw' on disk", file_name)
-            # Copy main part of the song (90%)
-            main_part_length = round_on_sample(int((length*0.9)*one_second_samples_num))
+            # Song length precision is 1 second.
+            # Copy the song except the last 2 seconds of data (2 times the precision)
+            main_part_length = round_on_sample(int((length-2)*one_second_samples_num))
             with self.raw_data_lock:
                 len_available_raw_data = len(self.raw_data)
             logging.debug("Available samples : %d", len_available_raw_data)
@@ -144,7 +181,7 @@ class SongWriter(threading.Thread):
                 logging.debug("Available samples : %d", len_available_raw_data)
                 logging.debug("Main part length : %d", main_part_length)
 
-
+            # Actually write main part on disk
             with self.raw_data_lock:
                 output_file.write(bytes(self.raw_data[0:main_part_length]))
                 del self.raw_data[0:main_part_length]
@@ -156,32 +193,22 @@ class SongWriter(threading.Thread):
                 length
             )
 
-            # Read more samples until a gap is detected
-            with self.raw_data_lock:
-                len_available_raw_data = len(self.raw_data)
-            silence = find_longest_silence(lasting_raw_data)
-            while (not silence['found']) and len_available_raw_data > len(lasting_raw_data):
-                # Make sure that the next song has actually started before looking for a gap
-                time.sleep(5)
+            # Wait for the remaining data of the song
+            while (
+                len_available_raw_data < 2*one_second_samples_num and
+                not self.synchronization['end'].is_set()
+                ):
+                time.sleep(1)
                 with self.raw_data_lock:
-                    lasting_raw_data.extend(
-                        self.raw_data[
-                            len(lasting_raw_data):
-                            len(lasting_raw_data)+(5*one_second_samples_num)
-                            ])
                     len_available_raw_data = len(self.raw_data)
-                logging.debug(
-                    "No silence found. More bytes read (%s / %s)",
-                    len(lasting_raw_data), len_available_raw_data)
-                silence = find_longest_silence(lasting_raw_data, silence)
 
-            if not silence['found']:
-                # No silence detected, we probably are at the end of the playlist,
-                # write all data loaded
-                logging.debug("No silence found. Write all availables data")
+            with self.raw_data_lock:
+                lasting_raw_data = list(self.raw_data[0:2*one_second_samples_num])
+            if self.synchronization['end'].is_set():
                 breaking_byte = len(lasting_raw_data)
             else:
-                breaking_byte = silence['longest_silence']['cut']
+                breaking_byte = find_breaking_byte(lasting_raw_data)
+
             # Write the end of the song
             output_file.write(bytes(lasting_raw_data[0:breaking_byte]))
             # Delete it from the raw_data
@@ -196,7 +223,6 @@ class SongWriter(threading.Thread):
         while not (
                 self.synchronization['end'].is_set() and
                 self.synchronization['tasks'].empty()):
-            # TODO : stop waiting if appinspector stopped without putting task
             while task is None:
                 try:
                     task = self.synchronization['tasks'].get(timeout=10)
