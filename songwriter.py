@@ -162,6 +162,7 @@ class SongWriter(threading.Thread):
         lasting_raw_data = [] # Copy of a part of raw_data which must contain the end of the song
         silence = None # Inter-track gap information
         breaking_byte = None # Index of byte on which to cut the raw stream
+        wrote_length = 0.0 # Actual length wrote on disk (in seconds with decimal part)
 
         with io.open("{}.raw".format(file_name), 'wb') as output_file:
             logging.info("Writing '%s.raw' on disk", file_name)
@@ -215,8 +216,13 @@ class SongWriter(threading.Thread):
             with self.raw_data_lock:
                 del self.raw_data[0:breaking_byte]
 
+            wrote_length = output_file.tell()/one_second_samples_num
+
+        return wrote_length
+
     def run(self):
         task = None
+        remaining_length = 0
         logging.info("Start barrier reached")
         self.synchronization['start'].wait()
 
@@ -232,7 +238,12 @@ class SongWriter(threading.Thread):
                     else:
                         pass
             if task is not None:
-                self.write_data(task['id'], task['length'])
+                logging.debug("Task measured length: %s s", task['length'])
+                logging.debug("Task computed length: %s s", task['length'] + remaining_length)
+                wrote_length = self.write_data(task['id'], task['length'] + remaining_length)
+                remaining_length = task['length'] - wrote_length
+                logging.debug("Task wrote length: %s s", wrote_length)
+                logging.debug("Task remaining length: %s s", remaining_length)
 
                 logging.info("Calling encode to convert %s", task['id'])
                 self.encoder.encode(
