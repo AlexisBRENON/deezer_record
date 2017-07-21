@@ -23,7 +23,10 @@ class AppInspector(threading.Thread):
     def get_x_win_title(self):
         """ Get the title of the application's window """
         xwininfo_process = subprocess.Popen(
-            ["/usr/bin/xprop", "-id", self.browser_x_winid, "WM_NAME"],
+            ["/usr/bin/xprop",
+            "-f", "WM_NAME", "0u",
+            "-id", self.browser_x_winid,
+            "WM_NAME"],
             stdout=subprocess.PIPE
             )
         return xwininfo_process.communicate()[0].decode().split(" = ")[1].strip(" \n\"")
