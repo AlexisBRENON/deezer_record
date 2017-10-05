@@ -6,6 +6,8 @@ Implementation of different standard encoders
 import os
 import subprocess
 
+from slugify import slugify
+
 class Encoder:
     """
     Encoder interface.
@@ -23,11 +25,7 @@ class Encoder:
             filename = infos['artist'][0:50]
             filename += "-"
             filename += infos['title'][0:50]
-            filename.replace("/", "-")
-            filename.replace("\0", "-")
-            return filename
-        else:
-            return None
+            return slugify(filename)
 
     def __init__(self, keep_raw=False):
         self.keep_raw = keep_raw
@@ -63,7 +61,7 @@ class DebugEncoder(Encoder):
         """
         Delete all raw files monitored by the encoder.
         """
-        for basename in self.encoded.keys():
+        for basename in self.encoded:
             self.delete_raw(basename)
         self.encoded.clear()
 
@@ -80,8 +78,6 @@ class Mp3LameEncoder(Encoder):
         "track": "--tn",
         "genre": "--tg"
     }
-    def __init__(self, keep_raw=False):
-        super(Mp3LameEncoder, self).__init__(keep_raw)
 
     def encode(self, basename, infos):
         cmd = [
@@ -105,7 +101,7 @@ class Mp3LameEncoder(Encoder):
                     cmd.append(str(value))
 
         cmd.append("{}.raw".format(basename))
-        filename = Encoder.get_filename(infos)
+        filename = self.get_filename(infos)
         if not filename:
             filename = basename
         cmd.append("{}.mp3".format(filename))
@@ -136,9 +132,6 @@ class FlacEncoder(Encoder):
         "contact": "CONTACT",
         "isrc": "ISRC"
     }
-
-    def __init__(self, keep_raw=False):
-        super(FlacEncoder, self).__init__(keep_raw)
 
     def encode(self, basename, infos):
         cmd = [
