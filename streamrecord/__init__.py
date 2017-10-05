@@ -17,11 +17,11 @@ import argparse
 import threading
 import subprocess
 
-from pulseaudiomanager import PulseAudioManager
-from appinspector import AppInspector
-from streamloader import StreamLoader
-from songwriter import SongWriter
-import encoder
+from .pulseaudiomanager import PulseAudioManager
+from .appinspector import PollAppInspector, NotifyAppInspector
+from .streamloader import StreamLoader
+from .songwriter import SongWriter
+from .encoder import Mp3LameEncoder, FlacEncoder
 
 def get_x_win_id():
     """ Ask the user to click on the window to record and returns its X id """
@@ -53,8 +53,16 @@ def main():
         "--encoder",
         help="Choose which encoder to use. (Activate FLAC encoder for the moment...)",
         action="store_const",
-        default=encoder.Mp3LameEncoder,
-        const=encoder.FlacEncoder
+        default=Mp3LameEncoder,
+        const=FlacEncoder
+    )
+    arg_parser.add_argument(
+        "--poll",
+        help="Use polling for window title change detection",
+        action="store_const",
+        default=NotifyAppInspector,
+        const=PollAppInspector,
+        dest="app_inspector"
     )
     arg_parser.add_argument(
         "--debug", "-d",
@@ -100,7 +108,7 @@ def main():
         },
         parec_pipe_write_end)
 
-    browser_inspector = AppInspector(
+    browser_inspector = options.app_inspector(
         {
             'start': start_barrier,
             'tasks': task_queue,
