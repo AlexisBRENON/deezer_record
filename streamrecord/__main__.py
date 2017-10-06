@@ -17,11 +17,11 @@ import argparse
 import threading
 import subprocess
 
-from .pulseaudiomanager import PulseAudioManager
-from .appinspector import PollAppInspector, NotifyAppInspector
-from .streamloader import StreamLoader
-from .songwriter import SongWriter
-from .encoder import Mp3LameEncoder, FlacEncoder
+from pulseaudiomanager import PulseAudioManager
+from appinspector import PollAppInspector, NotifyAppInspector
+from streamloader import StreamLoader
+from songwriter import SongWriter
+from encoder import Mp3LameEncoder, FlacEncoder
 
 def get_x_win_id():
     """ Ask the user to click on the window to record and returns its X id """
