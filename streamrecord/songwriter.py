@@ -152,10 +152,11 @@ class SongWriter(threading.Thread):
         import json
         return "{}({}){}".format(self.name, self.ident, json.dumps(me))
 
-    def write_data(self, file_name, length):
+    def write_data(self, file_name, length, is_hard_length=False):
         """ Write data for ONE song on disk as raw.
         file_name: basename (without extension) of the file which is going to be created
         length: approximated length, in seconds, of the song recorded
+        is_hard_length: Is it a 'hard' length, or does the systel have to find the best breaking sample?
         """
         one_second_samples_num = 2 * 2 * 44100 # Number of bytes in one second
         len_available_raw_data = 0 # Number of bytes available in raw_data
@@ -205,7 +206,7 @@ class SongWriter(threading.Thread):
 
             with self.raw_data_lock:
                 lasting_raw_data = list(self.raw_data[0:2*one_second_samples_num])
-            if self.synchronization['end'].is_set():
+            if self.synchronization['end'].is_set() or is_hard_length:
                 breaking_byte = len(lasting_raw_data)
             else:
                 breaking_byte = find_breaking_byte(lasting_raw_data)
@@ -240,7 +241,7 @@ class SongWriter(threading.Thread):
             if task is not None:
                 logging.debug("Task measured length: %s s", task['length'])
                 logging.debug("Task computed length: %s s", task['length'] + remaining_length)
-                wrote_length = self.write_data(task['id'], task['length'] + remaining_length)
+                wrote_length = self.write_data(task['id'], task['length'] + remaining_length, task['hard_length'])
                 remaining_length = task['length'] - wrote_length
                 logging.debug("Task wrote length: %s s", wrote_length)
                 logging.debug("Task remaining length: %s s", remaining_length)

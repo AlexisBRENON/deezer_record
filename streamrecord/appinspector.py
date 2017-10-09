@@ -82,6 +82,7 @@ class AppInspector(threading.Thread):
             self.launch_task({
                 'id': new_time,
                 'length': new_time-previous_time,
+                'hard_length': isinstance(self, NotifyAppInspector),
                 'infos': {
                     'title': matching.group('title'),
                     'artist': matching.group('artist')
