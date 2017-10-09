@@ -14,6 +14,10 @@ Xorg is used mainly to detect when a song ended and when the whole playlist has 
 
 ## Dependancies
 
+First, you need some Python packages (available through pip):
+ * `python-slugify` (and not `slugify`)
+ * `python-xlib`
+
 As explain above you need an Xorg server with two utilities:
  * `xprop` which come with Xorg I think
  * `xwininfo` that you probably have to install manually
@@ -34,7 +38,7 @@ Prepare all the things that you need:
 
 Then launch the script :
 ```
-    ./deezer_record.py
+    python streamrecord
 ```
 You can use `-h` to see the different options.
 
