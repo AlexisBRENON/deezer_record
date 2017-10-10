@@ -33,13 +33,13 @@ class AppInspector(threading.Thread):
     def get_x_win_title(self):
         """ Get the title of the application's window """
         xwininfo_process = subprocess.Popen(
-            ["/usr/bin/xprop",
-            "-f", "WM_NAME", "0u",
-            "-id", "0x{:X}".format(self.browser_x_winid),
-            "WM_NAME"],
+            ["/usr/bin/xwininfo",
+            "-id", "0x{:X}".format(self.browser_x_winid)
+            ],
             stdout=subprocess.PIPE
             )
-        return xwininfo_process.communicate()[0].decode().split(" = ")[1].strip(" \n\"")
+        stdout = xwininfo_process.communicate()[0].decode()
+        return stdout.splitlines()[1].split('"')[1]
 
     def detect_changes(self, previous_name, previous_time):
         raise NotImplementedError()

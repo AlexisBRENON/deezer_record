@@ -18,11 +18,10 @@ First, you need some Python packages (available through pip):
  * `python-slugify` (and not `slugify`)
  * `python-xlib`
 
-As explain above you need an Xorg server with two utilities:
- * `xprop` which come with Xorg I think
+As explain above you need an Xorg server with the utility:
  * `xwininfo` that you probably have to install manually
 
-`xwininfo` is only used to get the window ID of the browser window (which is not returned by xprop) to use xprop without mouse input. In fact, `xprop` is not really necessary as the window title is also returned by xwininfo. Maybe I will remove the `xprop` dependancy one day.
+`xwininfo` is used to get the window ID of the browser window and then to grab the window's title.
 
 Then you must have **Pulseaudio** installed. This is quite the case for anyone using an Ubuntu/Debian based distrib (I don't know for the other). Pulseaudio must come (I hope) with `pacmd`, `pactl` and `parec`, if not, install them. If you want, it's absolutely not necessary, you can also install `pavucontrol` to check that the browser output is actually moved, or that your browser actually plays something.
 I think that the same result can be achieve (maybe easier) with JACK, but as it's not installed by default on many distrib and that it's a mess to use it with pulseaudio also installed (go to hell pulseaudio's autolaunch), I didn't handle it. Feel free to fork !
@@ -42,7 +41,7 @@ Then launch the script :
 ```
 You can use `-h` to see the different options.
 
-If you didn't pass any argument, you will be prompted to click on the player window. This is to grab the window ID used with `xprop` to get the window title.
+If you didn't pass any argument, you will be prompted to click on the player window. This is to grab the window ID used with `xwininfo` to get the window title.
 
 Then, you have to launch the player (if it's not already playing), and then press `Enter` in the terminal window. Don't worry, the whole first song will be recorded but at the end (that's why you have to check the _loop_ switch).
 
