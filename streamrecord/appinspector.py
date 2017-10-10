@@ -3,6 +3,7 @@
 Implementation of the class watching the playing application
 """
 
+import json
 import time
 import select
 import logging
@@ -79,7 +80,7 @@ class AppInspector(threading.Thread):
                 initial_fully_recorded = True
 
             matching = self.title_regex.match(previous_name)
-            self.launch_task({
+            task = {
                 'id': new_time,
                 'length': new_time-previous_time,
                 'hard_length': isinstance(self, NotifyAppInspector),
@@ -87,7 +88,9 @@ class AppInspector(threading.Thread):
                     'title': matching.group('title'),
                     'artist': matching.group('artist')
                 }
-            })
+            }
+            logging.debug(json.dumps(task))
+            self.launch_task(task)
             previous_time = new_time
             previous_name = current_name
 
