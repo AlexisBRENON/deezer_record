@@ -22,10 +22,10 @@ class Encoder:
         Return a default file name from infos
         """
         if infos and infos['title'] and infos['artist']:
-            filename = infos['artist'][0:50]
+            filename = slugify(infos['artist'][0:50], separator="_")
             filename += "-"
-            filename += infos['title'][0:50]
-            return slugify(filename)
+            filename += slugify(infos['title'][0:50], separator="_")
+            return filename
 
     def __init__(self, keep_raw=False):
         self.keep_raw = keep_raw
