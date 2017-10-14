@@ -17,6 +17,8 @@ import argparse
 import threading
 import subprocess
 
+import notify2
+
 from pulseaudiomanager import PulseAudioManager
 from appinspector import PollAppInspector, NotifyAppInspector
 from streamloader import StreamLoader
@@ -172,6 +174,13 @@ def main():
     logging.info("%s joined", repr(song_writer))
 
     logging.info("Exit")
+
+    notify2.init("Stream Record")
+    notify2.Notification(
+        "End of record",
+        "Stream Record has finished to record songs.",
+        "dialog-information"
+    ).show()
 
 if __name__ == "__main__":
     main()
