@@ -44,11 +44,13 @@ setup(
         ],
     keywords='audio stream record',
     packages=['streamrecord'],
-    install_require=[
+    install_requires=[
         'python-slugify',
-        'python-xlib'
+        'python-xlib',
+        'dbus-python',
+        'notify2'
     ],
-    python_require='>=3',
+    python_requires='>=3',
     entry_points={
         'console_scripts': ['streamrecord=streamrecord']
     },
