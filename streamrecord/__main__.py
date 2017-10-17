@@ -19,11 +19,18 @@ import subprocess
 
 import notify2
 
-from pulseaudiomanager import PulseAudioManager
-from appinspector import PollAppInspector, NotifyAppInspector
-from streamloader import StreamLoader
-from songwriter import SongWriter
-from encoder import Mp3LameEncoder, FlacEncoder
+if __package__ == "":
+    from pulseaudiomanager import PulseAudioManager
+    from appinspector import PollAppInspector, NotifyAppInspector
+    from streamloader import StreamLoader
+    from songwriter import SongWriter
+    from encoder import Mp3LameEncoder, FlacEncoder
+elif __package__ == "streamrecord":
+    from streamrecord.pulseaudiomanager import PulseAudioManager
+    from streamrecord.appinspector import PollAppInspector, NotifyAppInspector
+    from streamrecord.streamloader import StreamLoader
+    from streamrecord.songwriter import SongWriter
+    from streamrecord.encoder import Mp3LameEncoder, FlacEncoder
 
 def get_x_win_id():
     """ Ask the user to click on the window to record and returns its X id """

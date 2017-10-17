@@ -25,7 +25,7 @@ class PyTest(TestCommand):
 
 setup(
     name='streamrecord',
-    version='0.9.0',
+    version='0.9.1',
     description='Record and split an audio stream',
     long_description="""RecordStream allows you to record audio from streaming services (like Spotify, Deezer, Youtube, etc.) and to split this stream in tracks, named and tagged with proper informations.""",
     url='http://github.com/AlexisBRENON/deezer_record',
@@ -52,7 +52,7 @@ setup(
     ],
     python_requires='>=3',
     entry_points={
-        'console_scripts': ['streamrecord=streamrecord']
+        'console_scripts': ['streamrecord=streamrecord.__main__:main']
     },
     zip_safe=True,
     tests_require=['pytest'],
